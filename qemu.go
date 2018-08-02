@@ -465,6 +465,8 @@ func (d *Driver) Start() error {
 	}
 
 	startCmd = append(startCmd,
+		"-machine", "accel=kvm,kernel_irqchip=on",
+		"-cpu", "host",
 		"-m", fmt.Sprintf("%d", d.Memory),
 		"-smp", fmt.Sprintf("%d", d.CPU),
 		"-boot", "d")
@@ -501,12 +503,6 @@ func (d *Driver) Start() error {
 	}
 
 	startCmd = append(startCmd, "-daemonize")
-
-	// other options
-	// "-enable-kvm" if its available
-	if _, err := os.Stat("/dev/kvm"); err == nil {
-		startCmd = append(startCmd, "-enable-kvm")
-	}
 
 	if d.CloudConfigRoot != "" {
 		startCmd = append(startCmd,
