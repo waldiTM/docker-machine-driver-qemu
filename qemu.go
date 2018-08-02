@@ -61,6 +61,7 @@ type Driver struct {
 	UserDataFile    string
 	CloudConfigRoot string
 	LocalPorts      string
+	LocalIP         string
 }
 
 func (d *Driver) GetCreateFlags() []mcnflag.Flag {
@@ -144,6 +145,11 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			Name:   "qemu-localports",
 			Usage:  "Port range to bind local SSH and engine ports",
 		},
+		mcnflag.StringFlag{
+			Name:   "qemu-localip",
+			Usage:  "IP to bind local SSH and engine ports",
+			Value:  "127.0.0.1",
+		},
 		/* Not yet implemented
 		mcnflag.Flag{
 			Name:  "qemu-no-share",
@@ -158,8 +164,7 @@ func (d *Driver) GetMachineName() string {
 }
 
 func (d *Driver) GetSSHHostname() (string, error) {
-	return "localhost", nil
-	//return d.GetIP()
+	return d.GetIP()
 }
 
 func (d *Driver) GetSSHKeyPath() string {
@@ -209,6 +214,7 @@ func (d *Driver) SetConfigFromFlags(flags drivers.DriverOptions) error {
 	d.UserDataFile = flags.String("qemu-userdata")
 	d.EnginePort = 2376
 	d.LocalPorts = flags.String("qemu-localports")
+	d.LocalIP = flags.String("qemu-localip")
 	d.FirstQuery = true
 	d.SSHPort = 22
 	d.DiskPath = d.ResolveStorePath(fmt.Sprintf("%s.img", d.MachineName))
@@ -245,7 +251,7 @@ func NewDriver(hostName, storePath string) drivers.Driver {
 
 func (d *Driver) GetIP() (string, error) {
 	if d.Network == "user" {
-		return "127.0.0.1", nil
+		return d.LocalIP, nil
 	}
 	return d.NetworkAddress, nil
 }
@@ -463,7 +469,7 @@ func (d *Driver) Start() error {
 	if d.Network == "user" {
 		startCmd = append(startCmd,
 			"-net", "nic,vlan=0,model=virtio",
-			"-net", fmt.Sprintf("user,vlan=0,hostfwd=tcp::%d-:22,hostfwd=tcp::%d-:2376,hostname=%s", d.SSHPort, d.EnginePort, d.GetMachineName()),
+			"-net", fmt.Sprintf("user,vlan=0,hostfwd=tcp:%s:%d-:22,hostfwd=tcp:%s:%d-:2376,hostname=%s", d.LocalIP, d.SSHPort, d.LocalIP, d.EnginePort, d.GetMachineName()),
 		)
 	} else if d.Network == "tap" {
 		startCmd = append(startCmd,
@@ -498,10 +504,10 @@ func (d *Driver) Start() error {
 		//if err := cmdStart(d.Program, startCmd...); err != nil {
 		//	return err
 	}
-	log.Infof("Waiting for VM to start (ssh -p %d docker@localhost)...", d.SSHPort)
+	log.Infof("Waiting for VM to start (ssh -p %d docker@%s)...", d.SSHPort, d.LocalIP)
 
 	//return ssh.WaitForTCP(fmt.Sprintf("localhost:%d", d.SSHPort))
-	return WaitForTCPWithDelay(fmt.Sprintf("localhost:%d", d.SSHPort), time.Second)
+	return WaitForTCPWithDelay(fmt.Sprintf("%s:%d", d.LocalIP, d.SSHPort), time.Second)
 }
 
 func cmdOutErr(cmdStr string, args ...string) (string, string, error) {
