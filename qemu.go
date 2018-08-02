@@ -42,7 +42,6 @@ type Driver struct {
 	Program          string
 	Display          bool
 	DisplayType      string
-	Nographic        bool
 	VirtioDrives     bool
 	Network          string
 	PrivateNetwork   string
@@ -94,10 +93,6 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			EnvVar: "QEMU_DISPLAY_TYPE",
 			Name:   "qemu-display-type",
 			Usage:  "Select type of display",
-		},
-		mcnflag.BoolFlag{
-			Name:  "qemu-nographic",
-			Usage: "Use -nographic instead of -display none",
 		},
 		mcnflag.BoolFlag{
 			EnvVar: "QEMU_VIRTIO_DRIVES",
@@ -204,7 +199,6 @@ func (d *Driver) SetConfigFromFlags(flags drivers.DriverOptions) error {
 	d.Program = flags.String("qemu-program")
 	d.Display = flags.Bool("qemu-display")
 	d.DisplayType = flags.String("qemu-display-type")
-	d.Nographic = flags.Bool("qemu-nographic")
 	d.VirtioDrives = flags.Bool("qemu-virtio-drives")
 	d.Network = flags.String("qemu-network")
 	d.Boot2DockerURL = flags.String("qemu-boot2docker-url")
@@ -453,15 +447,9 @@ func (d *Driver) Start() error {
 			// Use the default graphic output
 		}
 	} else {
-		if d.Nographic {
-			startCmd = append(startCmd,
-				"-nographic",
-			)
-		} else {
-			startCmd = append(startCmd,
-				"-display", "none",
-			)
-		}
+		startCmd = append(startCmd,
+			"-display", "none",
+		)
 	}
 
 	startCmd = append(startCmd,
