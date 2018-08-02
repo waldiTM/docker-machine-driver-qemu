@@ -94,11 +94,6 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			Name:   "qemu-display-type",
 			Usage:  "Select type of display",
 		},
-		mcnflag.BoolFlag{
-			EnvVar: "QEMU_VIRTIO_DRIVES",
-			Name:   "qemu-virtio-drives",
-			Usage:  "Use virtio for drives (cdrom and disk)",
-		},
 		mcnflag.StringFlag{
 			Name:  "qemu-network",
 			Usage: "Name of network to connect to (user, tap, bridge)",
@@ -199,7 +194,6 @@ func (d *Driver) SetConfigFromFlags(flags drivers.DriverOptions) error {
 	d.Program = flags.String("qemu-program")
 	d.Display = flags.Bool("qemu-display")
 	d.DisplayType = flags.String("qemu-display-type")
-	d.VirtioDrives = flags.Bool("qemu-virtio-drives")
 	d.Network = flags.String("qemu-network")
 	d.Boot2DockerURL = flags.String("qemu-boot2docker-url")
 	d.NetworkInterface = flags.String("qemu-network-interface")
@@ -459,13 +453,8 @@ func (d *Driver) Start() error {
 		"-smp", fmt.Sprintf("%d", d.CPU),
 		"-boot", "d")
 	var isoPath = filepath.Join(machineDir, isoFilename)
-	if d.VirtioDrives {
-		startCmd = append(startCmd,
-			"-drive", fmt.Sprintf("file=%s,index=2,media=cdrom,if=virtio", isoPath))
-	} else {
-		startCmd = append(startCmd,
-			"-cdrom", isoPath)
-	}
+	startCmd = append(startCmd,
+		"-drive", fmt.Sprintf("file=%s,index=2,media=cdrom,if=virtio", isoPath))
 	startCmd = append(startCmd,
 		"-qmp", fmt.Sprintf("unix:%s,server,nowait", d.monitorPath()),
 		"-pidfile", d.pidfilePath(),
@@ -499,13 +488,8 @@ func (d *Driver) Start() error {
 		startCmd = append(startCmd, "-device", "virtio-9p-pci,id=fs0,fsdev=fsdev0,mount_tag=config-2")
 	}
 
-	if d.VirtioDrives {
-		startCmd = append(startCmd,
-			"-drive", fmt.Sprintf("file=%s,index=0,media=disk,if=virtio", d.diskPath()))
-	} else {
-		// last argument is always the name of the disk image
-		startCmd = append(startCmd, d.diskPath())
-	}
+	startCmd = append(startCmd,
+		"-drive", fmt.Sprintf("file=%s,index=0,media=disk,if=virtio", d.diskPath()))
 
 	if stdout, stderr, err := cmdOutErr(d.Program, startCmd...); err != nil {
 		fmt.Printf("OUTPUT: %s\n", stdout)
