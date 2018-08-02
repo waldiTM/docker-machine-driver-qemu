@@ -1,4 +1,4 @@
-package qemu
+package main
 
 import (
 	"archive/tar"
