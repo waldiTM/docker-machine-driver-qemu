@@ -1,9 +1,9 @@
 package main
 
 import (
-	"archive/tar"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -19,16 +19,14 @@ import (
 	"github.com/docker/machine/libmachine/drivers"
 	"github.com/docker/machine/libmachine/log"
 	"github.com/docker/machine/libmachine/mcnflag"
-	"github.com/docker/machine/libmachine/mcnutils"
 	"github.com/docker/machine/libmachine/ssh"
 	"github.com/docker/machine/libmachine/state"
 )
 
 const (
-	isoFilename        = "boot2docker.iso"
 	privateNetworkName = "docker-machines"
 
-	defaultSSHUser = "docker"
+	defaultSSHUser = "core"
 )
 
 type Driver struct {
@@ -37,15 +35,12 @@ type Driver struct {
 	FirstQuery bool
 
 	Memory           int
-	DiskSize         int
 	CPU              int
 	Program          string
 	Display          bool
 	DisplayType      string
-	VirtioDrives     bool
 	Network          string
 	PrivateNetwork   string
-	Boot2DockerURL   string
 	NetworkInterface string
 	NetworkAddress   string
 	NetworkBridge    string
@@ -58,8 +53,6 @@ type Driver struct {
 	//	conn             *libvirt.Connect
 	//	VM               *libvirt.Domain
 	vmLoaded        bool
-	UserDataFile    string
-	CloudConfigRoot string
 	LocalPorts      string
 	LocalIP         string
 }
@@ -70,11 +63,6 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			Name:  "qemu-memory",
 			Usage: "Size of memory for host in MB",
 			Value: 1024,
-		},
-		mcnflag.IntFlag{
-			Name:  "qemu-disk-size",
-			Usage: "Size of disk for host in MB",
-			Value: 20000,
 		},
 		mcnflag.IntFlag{
 			Name:  "qemu-cpu-count",
@@ -101,12 +89,6 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			Value: "user",
 		},
 		mcnflag.StringFlag{
-			EnvVar: "QEMU_BOOT2DOCKER_URL",
-			Name:   "qemu-boot2docker-url",
-			Usage:  "The URL of the boot2docker image. Defaults to the latest available version",
-			Value:  "",
-		},
-		mcnflag.StringFlag{
 			Name:  "qemu-network-interface",
 			Usage: "Name of the network interface to be used for networking (for tap)",
 			Value: "tap0",
@@ -121,6 +103,11 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			Value: "br0",
 		},
 		mcnflag.StringFlag{
+			EnvVar: "QEMU_DISK_PATH",
+			Name:   "qemu-disk-path",
+			Usage:  "The path of the coreos image.",
+		},
+		mcnflag.StringFlag{
 			Name:  "qemu-cache-mode",
 			Usage: "Disk cache mode: default, none, writethrough, writeback, directsync, or unsafe",
 			Value: "default",
@@ -129,16 +116,6 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			Name:  "qemu-io-mode",
 			Usage: "Disk IO mode: threads, native",
 			Value: "threads",
-		},
-		mcnflag.StringFlag{
-			EnvVar: "QEMU_SSH_USER",
-			Name:   "qemu-ssh-user",
-			Usage:  "SSH username",
-			Value:  defaultSSHUser,
-		},
-		mcnflag.StringFlag{
-			Name:  "qemu-userdata",
-			Usage: "cloud-config userdata file",
 		},
 		mcnflag.StringFlag{
 			EnvVar: "QEMU_LOCALPORTS",
@@ -180,11 +157,7 @@ func (d *Driver) GetSSHPort() (int, error) {
 }
 
 func (d *Driver) GetSSHUsername() string {
-	if d.SSHUser == "" {
-		d.SSHUser = "docker"
-	}
-
-	return d.SSHUser
+	return defaultSSHUser
 }
 
 func (d *Driver) DriverName() string {
@@ -194,30 +167,30 @@ func (d *Driver) DriverName() string {
 func (d *Driver) SetConfigFromFlags(flags drivers.DriverOptions) error {
 	log.Debugf("SetConfigFromFlags called")
 	d.Memory = flags.Int("qemu-memory")
-	d.DiskSize = flags.Int("qemu-disk-size")
 	d.CPU = flags.Int("qemu-cpu-count")
 	d.Program = flags.String("qemu-program")
 	d.Display = flags.Bool("qemu-display")
 	d.DisplayType = flags.String("qemu-display-type")
 	d.Network = flags.String("qemu-network")
-	d.Boot2DockerURL = flags.String("qemu-boot2docker-url")
 	d.NetworkInterface = flags.String("qemu-network-interface")
 	d.NetworkAddress = flags.String("qemu-network-address")
 	d.NetworkBridge = flags.String("qemu-network-bridge")
+	d.DiskPath = flags.String("qemu-disk-path")
 	d.CacheMode = flags.String("qemu-cache-mode")
 	d.IOMode = flags.String("qemu-io-mode")
 
 	d.SwarmMaster = flags.Bool("swarm-master")
 	d.SwarmHost = flags.String("swarm-host")
 	d.SwarmDiscovery = flags.String("swarm-discovery")
-	d.SSHUser = flags.String("qemu-ssh-user")
-	d.UserDataFile = flags.String("qemu-userdata")
 	d.EnginePort = 2376
 	d.LocalPorts = flags.String("qemu-localports")
 	d.LocalIP = flags.String("qemu-localip")
 	d.FirstQuery = true
 	d.SSHPort = 22
-	d.DiskPath = d.ResolveStorePath(fmt.Sprintf("%s.img", d.MachineName))
+
+	if d.DiskPath == "" {
+		return errors.New("missing the disk path (--qemu-disk-path)")
+	}
 	return nil
 }
 
@@ -316,7 +289,6 @@ func (d *Driver) PreCreateCheck() error {
 }
 
 func (d *Driver) Create() error {
-	var err error
 	if d.Network == "user" {
 		minPort, maxPort, err := parsePortRange(d.LocalPorts)
 		log.Debugf("port range: %d -> %d", minPort, maxPort)
@@ -340,26 +312,15 @@ func (d *Driver) Create() error {
 			break
 		}
 	}
-	b2dutils := mcnutils.NewB2dUtils(d.StorePath)
-	if err := b2dutils.CopyIsoToMachineDir(d.Boot2DockerURL, d.MachineName); err != nil {
-		return err
-	}
 
 	log.Infof("Creating SSH key...")
 	if err := ssh.GenerateSSHKey(d.sshKeyPath()); err != nil {
 		return err
 	}
 
-	log.Infof("Creating Disk image...")
-	if err := d.generateDiskImage(d.DiskSize); err != nil {
+	log.Infof("Creating Ignition config...")
+	if err := d.generateIgnitionConfig(); err != nil {
 		return err
-	}
-
-	if d.UserDataFile != "" {
-		log.Infof("Creating Userdata Disk...")
-		if d.CloudConfigRoot, err = d.generateUserdataDisk(d.UserDataFile); err != nil {
-			return err
-		}
 	}
 
 	log.Infof("Starting QEMU VM...")
@@ -433,9 +394,6 @@ func getAvailableTCPPortFromRange(minPort int, maxPort int) (int, error) {
 }
 
 func (d *Driver) Start() error {
-	// fmt.Printf("Init qemu %s\n", i.VM)
-	machineDir := filepath.Join(d.StorePath, "machines", d.GetMachineName())
-
 	var startCmd []string
 
 	if d.Display {
@@ -457,29 +415,25 @@ func (d *Driver) Start() error {
 		"-cpu", "host",
 		"-m", fmt.Sprintf("%d", d.Memory),
 		"-smp", fmt.Sprintf("%d", d.CPU),
-		"-boot", "d")
-	var isoPath = filepath.Join(machineDir, isoFilename)
-	startCmd = append(startCmd,
-		"-drive", fmt.Sprintf("file=%s,index=2,media=cdrom,if=virtio", isoPath))
-	startCmd = append(startCmd,
 		"-qmp", fmt.Sprintf("unix:%s,server,nowait", d.monitorPath()),
 		"-pidfile", d.pidfilePath(),
+		"-fw_cfg", fmt.Sprintf("name=opt/com.coreos/config,file=%s", d.ignitionConfigPath()),
 	)
 
 	if d.Network == "user" {
 		startCmd = append(startCmd,
-			"-net", "nic,vlan=0,model=virtio",
-			"-net", fmt.Sprintf("user,vlan=0,hostfwd=tcp:%s:%d-:22,hostfwd=tcp:%s:%d-:2376,hostname=%s", d.LocalIP, d.SSHPort, d.LocalIP, d.EnginePort, d.GetMachineName()),
+			"-net", "nic,model=virtio",
+			"-net", fmt.Sprintf("user,hostfwd=tcp:%s:%d-:22,hostfwd=tcp:%s:%d-:2376,hostname=%s", d.LocalIP, d.SSHPort, d.LocalIP, d.EnginePort, d.GetMachineName()),
 		)
 	} else if d.Network == "tap" {
 		startCmd = append(startCmd,
-			"-net", "nic,vlan=0,model=virtio",
-			"-net", fmt.Sprintf("tap,vlan=0,ifname=%s,script=no,downscript=no", d.NetworkInterface),
+			"-net", "nic,model=virtio",
+			"-net", fmt.Sprintf("tap,ifname=%s,script=no,downscript=no", d.NetworkInterface),
 		)
 	} else if d.Network == "bridge" {
 		startCmd = append(startCmd,
-			"-net", "nic,vlan=0,model=virtio",
-			"-net", fmt.Sprintf("bridge,vlan=0,br=%s", d.NetworkBridge),
+			"-net", "nic,model=virtio",
+			"-net", fmt.Sprintf("bridge,br=%s", d.NetworkBridge),
 		)
 	} else {
 		log.Errorf("Unknown network: %s", d.Network)
@@ -487,15 +441,8 @@ func (d *Driver) Start() error {
 
 	startCmd = append(startCmd, "-daemonize")
 
-	if d.CloudConfigRoot != "" {
-		startCmd = append(startCmd,
-			"-fsdev",
-			fmt.Sprintf("local,security_model=passthrough,readonly,id=fsdev0,path=%s", d.CloudConfigRoot))
-		startCmd = append(startCmd, "-device", "virtio-9p-pci,id=fs0,fsdev=fsdev0,mount_tag=config-2")
-	}
-
 	startCmd = append(startCmd,
-		"-drive", fmt.Sprintf("file=%s,index=0,media=disk,if=virtio", d.diskPath()))
+		"-drive", fmt.Sprintf("file=%s,index=0,snapshot=on,if=virtio", d.DiskPath))
 
 	if stdout, stderr, err := cmdOutErr(d.Program, startCmd...); err != nil {
 		fmt.Printf("OUTPUT: %s\n", stdout)
@@ -621,9 +568,9 @@ func (d *Driver) publicSSHKeyPath() string {
 	return d.sshKeyPath() + ".pub"
 }
 
-func (d *Driver) diskPath() string {
+func (d *Driver) ignitionConfigPath() string {
 	machineDir := filepath.Join(d.StorePath, "machines", d.GetMachineName())
-	return filepath.Join(machineDir, "disk.qcow2")
+	return filepath.Join(machineDir, "ignition.json")
 }
 
 func (d *Driver) monitorPath() string {
@@ -636,90 +583,50 @@ func (d *Driver) pidfilePath() string {
 	return filepath.Join(machineDir, "qemu.pid")
 }
 
-// Make a boot2docker VM disk image.
-func (d *Driver) generateDiskImage(size int) error {
-	log.Debugf("Creating %d MB hard disk image...", size)
-
-	magicString := "boot2docker, please format-me"
-
-	buf := new(bytes.Buffer)
-	tw := tar.NewWriter(buf)
-
-	// magicString first so the automount script knows to format the disk
-	file := &tar.Header{Name: magicString, Size: int64(len(magicString))}
-	if err := tw.WriteHeader(file); err != nil {
-		return err
-	}
-	if _, err := tw.Write([]byte(magicString)); err != nil {
-		return err
-	}
-	// .ssh/key.pub => authorized_keys
-	file = &tar.Header{Name: ".ssh", Typeflag: tar.TypeDir, Mode: 0700}
-	if err := tw.WriteHeader(file); err != nil {
-		return err
-	}
+func (d *Driver) generateIgnitionConfig() error {
 	pubKey, err := ioutil.ReadFile(d.publicSSHKeyPath())
 	if err != nil {
 		return err
 	}
-	file = &tar.Header{Name: ".ssh/authorized_keys", Size: int64(len(pubKey)), Mode: 0644}
-	if err := tw.WriteHeader(file); err != nil {
-		return err
-	}
-	if _, err := tw.Write([]byte(pubKey)); err != nil {
-		return err
-	}
-	file = &tar.Header{Name: ".ssh/authorized_keys2", Size: int64(len(pubKey)), Mode: 0644}
-	if err := tw.WriteHeader(file); err != nil {
-		return err
-	}
-	if _, err := tw.Write([]byte(pubKey)); err != nil {
-		return err
-	}
-	if err := tw.Close(); err != nil {
-		return err
-	}
-	rawFile := fmt.Sprintf("%s.raw", d.diskPath())
-	if err := ioutil.WriteFile(rawFile, buf.Bytes(), 0644); err != nil {
-		return nil
-	}
-	if stdout, stderr, err := cmdOutErr("qemu-img", "convert", "-f", "raw", "-O", "qcow2", rawFile, d.diskPath()); err != nil {
-		fmt.Printf("OUTPUT: %s\n", stdout)
-		fmt.Printf("ERROR: %s\n", stderr)
-		return err
-	}
-	if stdout, stderr, err := cmdOutErr("qemu-img", "resize", d.diskPath(), fmt.Sprintf("+%dM", size)); err != nil {
-		fmt.Printf("OUTPUT: %s\n", stdout)
-		fmt.Printf("ERROR: %s\n", stderr)
-		return err
-	}
-	log.Debugf("DONE writing to %s and %s", rawFile, d.diskPath())
 
-	return nil
-}
+	type ignitionConfigIgnition struct {
+		Version string `json:"version"`
+	}
 
-func (d *Driver) generateUserdataDisk(userdataFile string) (string, error) {
-	// Start with virtio, add ISO & FAT format later
-	// Start with local file, add wget/fetct URL? (or if URL, use datasource..)
-	userdata, err := ioutil.ReadFile(userdataFile)
+	type ignitionConfigPasswdUser struct {
+		Name string `json:"name"`
+		SshAuthorizedKeys []string `json:"sshAuthorizedKeys"`
+	}
+
+	type ignitionConfigPasswd struct {
+		Users []ignitionConfigPasswdUser `json:"users"`
+	}
+
+	type ignitionConfig struct {
+		Ignition ignitionConfigIgnition `json:"ignition"`
+		Passwd ignitionConfigPasswd `json:"passwd"`
+	}
+
+	config := ignitionConfig {
+		Ignition: ignitionConfigIgnition { Version: "2.1.0" },
+		Passwd: ignitionConfigPasswd {
+			Users: []ignitionConfigPasswdUser {
+				ignitionConfigPasswdUser {
+					Name: defaultSSHUser,
+					SshAuthorizedKeys: []string { string(pubKey) },
+				},
+			},
+		},
+	}
+
+	c, err := json.Marshal(config)
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	machineDir := filepath.Join(d.StorePath, "machines", d.GetMachineName())
-	ccRoot := filepath.Join(machineDir, "cloud-config")
-	os.MkdirAll(ccRoot, 0755)
+	err = ioutil.WriteFile(d.ignitionConfigPath(), c, 0644)
 
-	userDataDir := filepath.Join(ccRoot, "openstack/latest")
-	os.MkdirAll(userDataDir, 0755)
-
-	writeFile := filepath.Join(userDataDir, "user_data")
-	if err := ioutil.WriteFile(writeFile, userdata, 0644); err != nil {
-		return "", err
-	}
-
-	return ccRoot, nil
-
+	return err
 }
 
 func (d *Driver) RunQMPCommand(command string) (map[string]interface{}, error) {
