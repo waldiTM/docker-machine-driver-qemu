@@ -47,6 +47,7 @@ type Driver struct {
 	CaCertPath       string
 	PrivateKeyPath   string
 	DiskPath         string
+	TmpDir           string
 	CacheMode        string
 	IOMode           string
 	connectionString string
@@ -106,6 +107,10 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			EnvVar: "QEMU_DISK_PATH",
 			Name:   "qemu-disk-path",
 			Usage:  "The path of the coreos image.",
+		},
+		mcnflag.StringFlag{
+			Name:   "qemu-temp-dir",
+			Usage:  "The directory for all temporary data.",
 		},
 		mcnflag.StringFlag{
 			Name:  "qemu-cache-mode",
@@ -176,6 +181,7 @@ func (d *Driver) SetConfigFromFlags(flags drivers.DriverOptions) error {
 	d.NetworkAddress = flags.String("qemu-network-address")
 	d.NetworkBridge = flags.String("qemu-network-bridge")
 	d.DiskPath = flags.String("qemu-disk-path")
+	d.TmpDir = flags.String("qemu-tmp-dir")
 	d.CacheMode = flags.String("qemu-cache-mode")
 	d.IOMode = flags.String("qemu-io-mode")
 
@@ -190,6 +196,9 @@ func (d *Driver) SetConfigFromFlags(flags drivers.DriverOptions) error {
 
 	if d.DiskPath == "" {
 		return errors.New("missing the disk path (--qemu-disk-path)")
+	}
+	if d.TmpDir == "" {
+		d.TmpDir = filepath.Join(d.StorePath, "machines", d.GetMachineName())
 	}
 	return nil
 }
@@ -446,7 +455,7 @@ func (d *Driver) Start() error {
 	startCmd = append(startCmd,
 		"-drive", fmt.Sprintf("file=%s,index=0,snapshot=on,if=virtio", d.DiskPath))
 
-	if stdout, stderr, err := cmdOutErr(d.Program, startCmd...); err != nil {
+	if stdout, stderr, err := cmdOutErr(d.Program, d.TmpDir, startCmd...); err != nil {
 		fmt.Printf("OUTPUT: %s\n", stdout)
 		fmt.Printf("ERROR: %s\n", stderr)
 		return err
@@ -459,8 +468,9 @@ func (d *Driver) Start() error {
 	return WaitForTCPWithDelay(fmt.Sprintf("%s:%d", d.LocalIP, d.SSHPort), time.Second)
 }
 
-func cmdOutErr(cmdStr string, args ...string) (string, string, error) {
+func cmdOutErr(cmdStr, tempdir string, args ...string) (string, string, error) {
 	cmd := exec.Command(cmdStr, args...)
+	cmd.Env = append(os.Environ(), fmt.Sprintf("TMPDIR=%s", tempdir))
 	log.Debugf("executing: %v %v", cmdStr, strings.Join(args, " "))
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
