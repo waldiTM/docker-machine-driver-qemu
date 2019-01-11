@@ -418,6 +418,8 @@ func (d *Driver) Start() error {
 		"-qmp", fmt.Sprintf("unix:%s,server,nowait", d.monitorPath()),
 		"-pidfile", d.pidfilePath(),
 		"-fw_cfg", fmt.Sprintf("name=opt/com.coreos/config,file=%s", d.ignitionConfigPath()),
+		"-object", "rng-random,filename=/dev/urandom,id=rng0",
+		"-device", "virtio-rng-pci,rng=rng0",
 	)
 
 	if d.Network == "user" {
