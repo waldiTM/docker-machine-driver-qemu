@@ -298,19 +298,15 @@ func (d *Driver) PreCreateCheck() error {
 }
 
 func (d *Driver) Create() error {
+	var err error
 	if d.Network == "user" {
-		minPort, maxPort, err := parsePortRange(d.LocalPorts)
-		log.Debugf("port range: %d -> %d", minPort, maxPort)
-		if err != nil {
-			return err
-		}
-		d.SSHPort, err = getAvailableTCPPortFromRange(minPort, maxPort)
+		d.SSHPort, err = d.getAvailableTCPPort()
 		if err != nil {
 			return err
 		}
 
 		for {
-			d.EnginePort, err = getAvailableTCPPortFromRange(minPort, maxPort)
+			d.EnginePort, err = d.getAvailableTCPPort()
 			if err != nil {
 				return err
 			}
@@ -367,22 +363,28 @@ func getRandomPortNumberInRange(min int, max int) int {
 	return rand.Intn(max-min) + min
 }
 
-func getAvailableTCPPortFromRange(minPort int, maxPort int) (int, error) {
+func (d *Driver) getAvailableTCPPort() (int, error) {
+	minPort, maxPort, err := parsePortRange(d.LocalPorts)
+	if err != nil {
+		return 0, err
+	}
+	log.Debugf("port range: %d -> %d", minPort, maxPort)
+
 	port := 0
 	for i := 0; i <= 10; i++ {
 		var ln net.Listener
 		var err error
 		if minPort == 0 && maxPort == 65535 {
-			ln, err = net.Listen("tcp4", "127.0.0.1:0")
+			ln, err = net.Listen("tcp4", fmt.Sprintf("%s:0", d.LocalIP))
 			if err != nil {
 				return 0, err
 			}
 		} else {
 			port = getRandomPortNumberInRange(minPort, maxPort)
 			log.Debugf("testing port: %d", port)
-			ln, err = net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", port))
+			ln, err = net.Listen("tcp4", fmt.Sprintf("%s:%d", d.LocalIP, port))
 			if err != nil {
-				log.Debugf("port already in use: %d", port)
+				log.Debugf("port already in use: %s:%d", d.LocalIP, port)
 				continue
 			}
 		}
