@@ -616,9 +616,19 @@ func (d *Driver) generateIgnitionConfig() error {
 		Users []ignitionConfigPasswdUser `json:"users"`
 	}
 
+	type ignitionConfigSystemdUnit struct {
+		Name string `json:"name"`
+		Mask bool `json:"mask"`
+	}
+
+	type ignitionConfigSystemd struct {
+		Units []ignitionConfigSystemdUnit `json:"units"`
+	}
+
 	type ignitionConfig struct {
 		Ignition ignitionConfigIgnition `json:"ignition"`
 		Passwd ignitionConfigPasswd `json:"passwd"`
+		Systemd ignitionConfigSystemd `json:"systemd"`
 	}
 
 	config := ignitionConfig {
@@ -628,6 +638,18 @@ func (d *Driver) generateIgnitionConfig() error {
 				ignitionConfigPasswdUser {
 					Name: defaultSSHUser,
 					SshAuthorizedKeys: []string { string(pubKey) },
+				},
+			},
+		},
+		Systemd: ignitionConfigSystemd {
+			Units: []ignitionConfigSystemdUnit {
+				ignitionConfigSystemdUnit {
+					Name: "locksmithd.service",
+					Mask: true,
+				},
+				ignitionConfigSystemdUnit {
+					Name: "update-engine.service",
+					Mask: true,
 				},
 			},
 		},
