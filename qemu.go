@@ -109,7 +109,7 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			Usage:  "The path of the coreos image.",
 		},
 		mcnflag.StringFlag{
-			Name:   "qemu-temp-dir",
+			Name:   "qemu-tmp-dir",
 			Usage:  "The directory for all temporary data.",
 		},
 		mcnflag.StringFlag{
