@@ -32,7 +32,9 @@ func (d *Driver) generateIgnitionConfig() error {
 
 	type ignitionConfigSystemdUnit struct {
 		Name string `json:"name"`
+		Enabled bool `json:"enabled"`
 		Mask bool `json:"mask"`
+		Contents string `json:"contents"`
 	}
 
 	type ignitionConfigSystemd struct {
@@ -67,6 +69,15 @@ func (d *Driver) generateIgnitionConfig() error {
 				},
 			},
 		},
+	}
+
+	if d.Mount != "" {
+		systemd_mount := ignitionConfigSystemdUnit {
+			Name: "mnt.mount",
+			Enabled: true,
+			Contents: "[Mount]\nWhat=host\nWhere=/mnt\nType=9p\nOptions=trans=virtio,version=9p2000.L\n[Install]\nWantedBy=local-fs.target",
+		}
+		config.Systemd.Units = append(config.Systemd.Units, systemd_mount)
 	}
 
 	c, err := json.Marshal(config)

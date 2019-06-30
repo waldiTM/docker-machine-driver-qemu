@@ -44,6 +44,7 @@ type Driver struct {
 	NetworkInterface string
 	NetworkAddress   string
 	NetworkBridge    string
+	Mount            string
 	CaCertPath       string
 	PrivateKeyPath   string
 	DiskPath         string
@@ -83,6 +84,10 @@ func (d *Driver) GetCreateFlags() []mcnflag.Flag {
 			EnvVar: "QEMU_DISPLAY_TYPE",
 			Name:   "qemu-display-type",
 			Usage:  "Select type of display",
+		},
+		mcnflag.StringFlag{
+			Name: "qemu-mount",
+			Usage: "Mount given path at /mnt",
 		},
 		mcnflag.StringFlag{
 			Name:  "qemu-network",
@@ -180,6 +185,7 @@ func (d *Driver) SetConfigFromFlags(flags drivers.DriverOptions) error {
 	d.NetworkInterface = flags.String("qemu-network-interface")
 	d.NetworkAddress = flags.String("qemu-network-address")
 	d.NetworkBridge = flags.String("qemu-network-bridge")
+	d.Mount = flags.String("qemu-mount")
 	d.DiskPath = flags.String("qemu-disk-path")
 	d.TmpDir = flags.String("qemu-tmp-dir")
 	d.CacheMode = flags.String("qemu-cache-mode")
@@ -456,6 +462,11 @@ func (d *Driver) Start() error {
 
 	startCmd = append(startCmd,
 		"-drive", fmt.Sprintf("file=%s,index=0,snapshot=on,if=virtio", d.DiskPath))
+
+	if d.Mount != "" {
+		startCmd = append(startCmd,
+			"-virtfs", fmt.Sprintf("local,path=%s,security_model=none,mount_tag=host", d.Mount))
+	}
 
 	if stdout, stderr, err := cmdOutErr(d.Program, d.TmpDir, startCmd...); err != nil {
 		fmt.Printf("OUTPUT: %s\n", stdout)
